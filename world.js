@@ -16,6 +16,9 @@ function init(){
 	eventhandler.addKeyboardControl("H",undefined,function(){
 		world.heightmapRender(canvas.ctx)
 	});
+	eventhandler.addKeyboardControl("R",undefined,function(){
+		world.moveTectonicsPlates(10);
+	});
 
 	document.body.appendChild(canvas.canvas);
 }
@@ -29,26 +32,6 @@ function generate2Darray(width, height, defaultValue){
 		}
 	}
 	return array;
-}
-
-function getNeighbours(array,y,x){
-	var width = array.length,
-		height = array[0].length;
-	var left = (x-1 + width) % width,
-		right = (x+1) % width,
-		top = (y-1 + height) % height,
-		bottom = (y+1) % height;
-
-	var neighbours = [ array[left][top],
-		array[left][y],
-		array[left][bottom],
-		array[x][top],
-		array[x][bottom],
-		array[right][top],
-		array[right][y],
-		array[right][bottom] ];
-
-	return neighbours;
 }
 
 function get_random_color() {
@@ -84,8 +67,8 @@ function for2d(array, func){
 function World(){
 	// nastavení
 	this.tileSize = 14;
-	this.width = 1000/this.tileSize;
-	this.height = 700/this.tileSize;
+	this.width = Math.round(1000/this.tileSize);
+	this.height = Math.round(700/this.tileSize);
 	// 0 - 128 depth
 	this.terrainDepth = 48;
 	this.maxDepth = 256;
@@ -96,6 +79,8 @@ function World(){
 	this.tectonicsPlatesGlueTries = 5;
 
 	this.meteoritesNumber = 10;
+
+	this.tectonicsYears = 100;
 
 	this.generate();
 }
@@ -190,18 +175,115 @@ World.prototype.generate = function() {
 		}
 		_this.tectonicsPlates[y][x] = minplate;
 	});
+	// vytvoření mezer
+	for2d(this.tectonicsPlates, function(x,y){
+		var plate = _this.tectonicsPlates[y][x];
+		var comb = [0,-1,1];
+		for(var cx=0;cx<3;cx++){
+			for(var cy=0;cy<3;cy++){
+				if(cx != 0 && cy != 0)
+					continue;
+				var lx = loop(x+comb[cx],_this.width-1);
+				var ly = loop(y+comb[cy],_this.height-1);
+				var neighbour = _this.tectonicsPlates[ly][lx];
+				if(neighbour !== plate && neighbour !== -1){
+					console.log(neighbour, plate, lx, ly, x, y)
+					_this.tectonicsPlates[y][x] = -1;
+				}
+			}
+		}
+
+	});
+
 	// TODO: sesílání meteoritů
 	this.heightMap = generate2Darray(this.width, this.height, this.terrainDepth);
 	for(var m=0;m<this.meteoritesNumber;m++){
 		this.raiseLand(randomInt(0,this.width), randomInt(0,this.height), randomInt(2,12))
 	}
 
-	// pohyb tektonických desek
+	// konfigurace tektonických desek
+	this.tectonicsPlatesObjects = [];
+	for(plate=0;plate<this.tectonicsPlatesNumber;plate++){
+		this.tectonicsPlatesObjects[plate] = {
+			type: plate,
+			position: new Vector2(),
+			velocity: new Vector2( Math.random()*0.2-0.1, Math.random()*0.2-0.1 ),
+			size: 0,
+			mass: 0,
+			hustota: randomInt(3000, 10000),
+			center: new Vector2(),
+		}
+	}
 	for2d(this.tectonicsPlates, function(x,y){
-		
-	})
+		if(_this.tectonicsPlates[y][x] !== -1){
+			var plate = _this.tectonicsPlatesObjects[ _this.tectonicsPlates[y][x] ];
+			plate.size += 1;
+			plate.center.addSelf( new Vector2(x,y) );
+		}
+	});
 
+	for(plate=0;plate<this.tectonicsPlatesNumber;plate++){
+		var p = this.tectonicsPlatesObjects[plate];
+		p.center.divideScalar(p.size);
+		p.mass = p.size * p.hustota;
+	}
+
+	console.log(this.tectonicsPlatesObjects)
+
+	// pohyb tektonických desek
+	// this.moveTectonicsPlates()
 };
+
+World.prototype.moveTectonicsPlates = function(years) {
+	var _this = this;
+	for(var year=0;year < years;year++){
+		for(plate=0;plate<this.tectonicsPlatesNumber;plate++){
+			var p = this.tectonicsPlatesObjects[plate]
+			p.position.addSelf(p.velocity);
+			if(p.position.x > 1 || p.position.y > 1){
+				p.position.x = Math.round( p.position.x );
+				p.position.y = Math.round( p.position.y );
+
+				var newTectonicsPlates = generate2Darray(this.width, this.height, undefined);
+
+				for2d(this.tectonicsPlates, function(x,y){
+						var pole = _this.tectonicsPlates[y][x];
+						if(pole == p.type){
+							var lx = loop( x+p.position.x, _this.width-1 );
+							var ly = loop( y+p.position.y, _this.height-1 );
+							// var oldType = _this.tectonicsPlates[ly][lx];
+							if(newTectonicsPlates[y][x] === undefined)
+								newTectonicsPlates[y][x] = -1;
+							newTectonicsPlates[ly][lx] = pole;
+
+							// var crushp = _this.tectonicsPlatesObjects[oldType];
+							// console.log(oldType, lx, ly);
+							// velocityMap[ly][lx] = Math.abs(p.mass-crushp.mass);
+						}
+						else if(newTectonicsPlates[y][x] === undefined) {
+							newTectonicsPlates[y][x] = pole;
+						}
+				});
+
+				this.tectonicsPlates = newTectonicsPlates;
+				p.position.set(0,0);
+			}
+		}
+	}
+};
+
+function loop(value, max){
+	if(value > max){
+		return value % max;
+	}
+	// potřebuje doladit (hází to špatné values pro value < -max)
+	else if(value < 0) {
+		return max + ((value+1) % max);
+	}
+	else {
+		return value;
+	}
+}
 
 World.prototype.raiseLand = function(ex, ey, radius, func) {
 	var _this = this;
@@ -241,10 +323,29 @@ World.prototype.tectonicRender = function(ctx) {
 	// }
 	for(var y=0;y<this.height;y++){
 		for(var x=0;x<this.width;x++){
-			ctx.fillStyle = colors[ this.tectonicsPlates[y][x] ];
-			// ctx.fillText(this.tectonicsPlates[y][x],x*this.tileSize,(y+1)*this.tileSize);
+			if(this.tectonicsPlates[y][x] >= 0)
+				ctx.fillStyle = colors[ this.tectonicsPlates[y][x] ];
+			else
+				ctx.fillStyle = "#000";
 			ctx.fillRect(x*this.tileSize,y*this.tileSize, this.tileSize, this.tileSize);
+			ctx.fillStyle = "#000";
+			ctx.fillText(this.tectonicsPlates[y][x],x*this.tileSize,(y+1)*this.tileSize);
 		}
+	}
+	for(var i in this.tectonicsPlatesObjects){
+		ctx.fillStyle = "#FFFFFF";
+		var p = this.tectonicsPlatesObjects[i];
+		ctx.fillRect(p.center.x*this.tileSize, p.center.y*this.tileSize, this.tileSize, this.tileSize);
+		ctx.fillStyle = "#000"
+		ctx.fillText(p.type, p.center.x*this.tileSize, p.center.y*this.tileSize+8);
+
+		ctx.beginPath();
+		ctx.strokeStyle = "#F00";
+		ctx.lineWidth = 2;
+		ctx.moveTo(p.center.x*this.tileSize+this.tileSize/2,p.center.y*this.tileSize+this.tileSize/2);
+		ctx.lineTo(p.center.x*this.tileSize+this.tileSize/2+p.velocity.x*this.tileSize*10,p.center.y*this.tileSize+this.tileSize/2+p.velocity.y*this.tileSize*10);
+		ctx.stroke();
+		ctx.closePath();
 	}
 };
 
